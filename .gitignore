@@ -1,0 +1,13 @@
+.godot/
+*.translation
+*.apk
+*.aab
+builds/
+*.keystore
+*.jks
+.env
+.env.*
+!.env.example
+__pycache__/
+.venv/
+*.pyc

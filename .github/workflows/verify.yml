@@ -1,0 +1,32 @@
+name: Verify source
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  godot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install pinned Godot engine
+        env:
+          GODOT_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
+        run: |
+          curl --fail --location --retry 3 --output /tmp/godot.zip \
+            https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          echo "$GODOT_SHA512  /tmp/godot.zip" | sha512sum --check --strict
+          mkdir -p /tmp/traildash-godot
+          unzip -q /tmp/godot.zip -d /tmp/traildash-godot
+          chmod +x /tmp/traildash-godot/Godot_v4.7.2-stable_linux.x86_64
+      - name: Install development tools
+        run: python -m pip install -r requirements-dev.txt
+      - name: Validate content, formatting, scripts and behavior
+        env:
+          GODOT_BIN: /tmp/traildash-godot/Godot_v4.7.2-stable_linux.x86_64
+        run: python tools/verify.py
