@@ -32,6 +32,7 @@ def main():
     version = re.search(r'config/version="([^"]+)"', project).group(1)
     assert f'version/name="{version}"' in presets, "Export version differs from project version"
     run([sys.executable, "tools/content.py", "--check"], "content")
+    run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], "release-tests")
     for tool, options in [("gdformat", ["--check", "--line-length", "120"]), ("gdlint", [])]:
         binary = str(Path(args.lint_bin) / tool) if args.lint_bin else shutil.which(tool)
         if args.lint_bin and os.name == "nt":

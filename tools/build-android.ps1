@@ -1,7 +1,8 @@
 param(
     [string]$Godot = $env:GODOT_BIN,
     [string]$Adb = (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe'),
-    [string]$Device = ''
+    [string]$Device = '',
+    [string]$Python = 'python'
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -10,17 +11,10 @@ try {
     if (-not $Godot -or -not (Test-Path -LiteralPath $Godot)) {
         throw 'Set GODOT_BIN to the matching Godot 4.7.2 console executable.'
     }
-    New-Item -ItemType Directory -Path 'builds' -Force | Out-Null
     $version = (Select-String -LiteralPath 'project.godot' -Pattern '^config/version="(.*)"$').Matches[0].Groups[1].Value
     $apk = "builds/traildash-$version-debug.apk"
-    $output = & $Godot --headless --path . --export-debug Android $apk 2>&1
-    $exitCode = $LASTEXITCODE
-    $output | Set-Content -LiteralPath 'builds/export.log'
-    if ($exitCode -ne 0 -or ($output -match 'SCRIPT ERROR:|ERROR:')) {
-        throw 'Android export failed; see builds/export.log.'
-    }
-    $hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
-    [IO.File]::WriteAllText((Join-Path $projectRoot "$apk.sha256"), "$hash  $(Split-Path -Leaf $apk)`n")
+    & $Python tools/build_android.py --godot $Godot --sdk $env:ANDROID_HOME --java $env:JAVA_HOME
+    if ($LASTEXITCODE -ne 0) { throw 'Android export or APK verification failed; see builds/export.log.' }
     Write-Output "Built $apk"
     if ($Device) {
         $waiter = Start-Process -FilePath $Adb -ArgumentList @('-s', $Device, 'wait-for-device') `

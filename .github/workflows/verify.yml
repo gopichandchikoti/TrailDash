@@ -1,32 +1,155 @@
-name: Verify source
+name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: traildash-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  godot:
+  build:
+    name: Verify source and Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
+    env:
+      GODOT_VERSION: 4.7.2
+      GODOT_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
+      TEMPLATES_SHA256: f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011
+      TRAILDASH_PUBLISHABLE: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          cache: pip
       - name: Install pinned Godot engine
-        env:
-          GODOT_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
         run: |
-          curl --fail --location --retry 3 --output /tmp/godot.zip \
-            https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
-          echo "$GODOT_SHA512  /tmp/godot.zip" | sha512sum --check --strict
-          mkdir -p /tmp/traildash-godot
-          unzip -q /tmp/godot.zip -d /tmp/traildash-godot
-          chmod +x /tmp/traildash-godot/Godot_v4.7.2-stable_linux.x86_64
+          set -euo pipefail
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/godot.zip" \
+            "https://github.com/godotengine/godot/releases/download/$GODOT_VERSION-stable/Godot_v$GODOT_VERSION-stable_linux.x86_64.zip"
+          echo "$GODOT_SHA512  $RUNNER_TEMP/godot.zip" | sha512sum --check --strict
+          mkdir -p "$RUNNER_TEMP/traildash-godot"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/traildash-godot"
+          binary="$RUNNER_TEMP/traildash-godot/Godot_v$GODOT_VERSION-stable_linux.x86_64"
+          chmod +x "$binary"
+          echo "GODOT_BIN=$binary" >> "$GITHUB_ENV"
       - name: Install development tools
         run: python -m pip install -r requirements-dev.txt
       - name: Validate content, formatting, scripts and behavior
-        env:
-          GODOT_BIN: /tmp/traildash-godot/Godot_v4.7.2-stable_linux.x86_64
         run: python tools/verify.py
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare Android SDK and verified export template
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/templates.tpz" \
+            "https://github.com/godotengine/godot/releases/download/$GODOT_VERSION-stable/Godot_v$GODOT_VERSION-stable_export_templates.tpz"
+          echo "$TEMPLATES_SHA256  $RUNNER_TEMP/templates.tpz" | sha256sum --check --strict
+          templates="$HOME/.local/share/godot/export_templates/$GODOT_VERSION.stable"
+          mkdir -p "$templates"
+          unzip -j -q "$RUNNER_TEMP/templates.tpz" 'templates/android_debug.apk' 'templates/version.txt' -d "$templates"
+      - name: Build, sign and verify the preview APK
+        env:
+          ANDROID_PREVIEW_KEYSTORE_BASE64: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.ANDROID_PREVIEW_KEYSTORE_BASE64 || '' }}
+          ANDROID_PREVIEW_KEYSTORE_PASSWORD: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.ANDROID_PREVIEW_KEYSTORE_PASSWORD || '' }}
+          ANDROID_PREVIEW_KEY_ALIAS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.ANDROID_PREVIEW_KEY_ALIAS || '' }}
+          ANDROID_PREVIEW_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.ANDROID_PREVIEW_KEY_PASSWORD || '' }}
+          TRAILDASH_PREVIEW_CERT_SHA256: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.TRAILDASH_PREVIEW_CERT_SHA256 || '' }}
+        run: python tools/build_android.py --ci --editor-settings "$HOME/.config/godot/editor_settings-4.7.tres"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: traildash-apk
+          path: |
+            builds/release/TrailDash-preview.apk
+            builds/release/TrailDash-preview.apk.sha256
+            builds/release/build-evidence.json
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    name: Refresh the APK download
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: traildash-publish-download
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: traildash-apk
+          path: release
+      - name: Publish verified bytes when this commit is current
+        run: |
+          set -euo pipefail
+          tag=latest-build
+          if [ "$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)" != "$GITHUB_SHA" ]; then
+            echo 'A newer main commit exists; this run will not replace its download.'
+            exit 0
+          fi
+          (cd release && sha256sum --check --strict TrailDash-preview.apk.sha256)
+          test "$(jq -r .commit release/build-evidence.json)" = "$GITHUB_SHA"
+          test "$(jq -r .signing release/build-evidence.json)" = 'stable preview key'
+          version=$(jq -r .versionName release/build-evidence.json)
+          code=$(jq -r .versionCode release/build-evidence.json)
+          digest=$(jq -r .sha256 release/build-evidence.json)
+          test "$digest" = "$(cut -d' ' -f1 release/TrailDash-preview.apk.sha256)"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release download "$tag" --pattern build-evidence.json --dir "$RUNNER_TEMP/previous"
+            previous_code=$(jq -r .versionCode "$RUNNER_TEMP/previous/build-evidence.json")
+            if [ "$code" -le "$previous_code" ]; then
+              echo 'An equal or newer APK version already exists; refusing to roll back the download.'
+              exit 0
+            fi
+          fi
+          {
+            echo '# TrailDash latest preview'
+            echo
+            echo 'Automatically replaced after every successful push to main. This is a debug-signed development preview.'
+            echo
+            echo "- Version: $version (Android versionCode $code)"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- CI run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo '- Signing: stable preview key; same-key Android updates preserve local progress.'
+            echo "- Certificate SHA-256: $(jq -r .certificateSha256 release/build-evidence.json)"
+            echo "- APK SHA-256: $digest"
+            echo
+            echo 'Requires Android 7.0 / API 24 or newer. Download the APK and open it on Android to install.'
+            echo 'A checksum and build-evidence.json are attached. Physical-device release validation remains outstanding.'
+            echo "- How to play and build: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY#readme"
+          } > "$RUNNER_TEMP/notes.md"
+          if [ "$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)" != "$GITHUB_SHA" ]; then
+            echo 'Main advanced during verification; skipping this stale preview.'
+            exit 0
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/$tag" -f sha="$GITHUB_SHA" -F force=true > /dev/null
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+          fi
+          files=(release/TrailDash-preview.apk release/TrailDash-preview.apk.sha256 release/build-evidence.json)
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber
+            gh release edit "$tag" --title 'Latest build (preview)' --notes-file "$RUNNER_TEMP/notes.md" --prerelease --latest=false
+          else
+            gh release create "$tag" "${files[@]}" --title 'Latest build (preview)' \
+              --notes-file "$RUNNER_TEMP/notes.md" --prerelease --latest=false --target "$GITHUB_SHA"
+          fi
