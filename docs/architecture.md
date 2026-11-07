@@ -105,8 +105,8 @@ flowchart TD
 Physical Android hardware, sustained
 thermal/battery performance, multiple refresh rates/notches, screen reader behavior, production signing
 and store publication require separate evidence. Code coverage instrumentation is not configured;
-passing assertion counts must not be represented as coverage percentages. CI execution remains unverified
-until actually run by a hosting service.
+passing assertion counts must not be represented as coverage percentages. Hosted source verification
+passed after publication, as recorded in the source repository evidence below.
 
 ## Execution evidence — 2026-11-06
 
@@ -126,7 +126,7 @@ Tests use generated local data, not an existing player's files.
 | Android UI/runtime | Isolated `TrailDash_Test`, Android 15/API 35, Pixel 6 profile, 1080×2400 | Launch, tutorial, countdown, swipe lanes/jump, touch slide, Back pause, background/return, resume, results, settings, key remap, restart and records exercised |
 | Persistence/update | Force-stop/relaunch and same-key APK update | Preserved score 216, distance 116 m, four tokens, settings and bindings |
 | Mermaid | Existing `mmdc` parser/render tool against the diagram above | Parsed and rendered successfully |
-| Workflow YAML | PyYAML BaseLoader structure check | Passed; actual hosted execution not run |
+| Workflow YAML | PyYAML BaseLoader structure check and GitHub Actions | Passed locally and in the first hosted verification run |
 | Coverage/security tools | GDScript coverage, complexity/duplication percentages, dependency vulnerability/SAST scans | Not configured; no fabricated percentages or security certification |
 | Physical devices | Phone, refresh rates, notches, thermals, battery and screen reader | Not run; required before release |
 
@@ -141,7 +141,7 @@ game's SurfaceView frame pacing. The 60 FPS target and sustained physical-device
 Final local APK: **57,048,467 bytes**. SHA-256:
 `cb2410ad38dee0040939d81fea77019c5ec95a9c9b691e80534685816c659fb7`.
 The matching checksum file is next to the APK in `builds/`. This is a local validation build;
-no commit, push, remote CI run, production signing or publication was performed.
+production signing and APK release publication were not performed. Source publication is recorded below.
 
 Actual emulator captures: [home](evidence/android-home.png), [running](evidence/android-run.png),
 [outer-lane jump](evidence/android-jump.png), [results](evidence/android-results.png),
@@ -197,5 +197,10 @@ environments, local APKs, logs and signing keys are excluded by `.gitignore`.
 
 The local debug APK remains a validation artifact, recreated with `tools/build-android.ps1`.
 No GitHub release or production signing identity is created by source publication. The source
-verification workflow runs on pushes and pull requests; its hosted result is reported separately
-from the successful local checks above.
+verification workflow runs on pushes and pull requests.
+
+Publication evidence (2026-11-06): initial source commit `f1ef9e1199dfbfc5eaaf4768d36312a62de3cae0`
+was pushed to `origin/main`; GitHub's branch API and `git ls-remote` returned that same SHA. Anonymous
+GitHub API requests returned HTTP 200 for the public repository, README, Godot project and workflow.
+The [first hosted verification run](https://github.com/gopichandchikoti/TrailDash/actions/runs/42330430026)
+completed successfully. The local source checks also passed all 30,174 assertions before publication.

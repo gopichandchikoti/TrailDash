@@ -110,8 +110,8 @@ $env:JAVA_HOME = 'C:\path\to\jdk-17'
 The build script exports, verifies Godot's exit/log status, writes a SHA-256 file, and optionally
 installs/launches the APK. Its version comes from `project.godot`; verification checks export-preset
 agreement. Godot owns the local debug keystore. Production keys remain owner controlled and are not
-created or requested by this project. CI source checks are defined in `.github/workflows/verify.yml`;
-the hosted workflow has not been run from this workspace.
+created or requested by this project. CI source checks are defined in `.github/workflows/verify.yml`.
+The first [GitHub verification run passed](https://github.com/gopichandchikoti/TrailDash/actions/runs/42330430026).
 
 ## Troubleshooting and demonstration
 
